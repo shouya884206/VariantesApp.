@@ -1,4 +1,4 @@
-name: Android APK (One-Click)
+name: Android APK (One-Click, Self-Contained)
 
 on:
   push:
@@ -21,7 +21,297 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Gradle Build
+      - name: Create project files (no zip needed)
+        shell: bash
+        run: |
+          set -e
+          mkdir -p app/src/main/java/com/example/variantes
+          mkdir -p .github/workflows
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+            repositories { gradlePluginPortal(); google(); mavenCentral() }
+          }
+          dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "VariantesApp"
+          include(":app")
+          EOF
+
+          cat > build.gradle <<'EOF'
+          buildscript { ext.kotlin_version = '1.9.24' }
+          plugins {
+            id 'com.android.application' version '8.5.2' apply false
+            id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          kotlin.code.style=official
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+
+          android {
+            namespace 'com.example.variantes'
+            compileSdk 34
+            defaultConfig {
+              applicationId 'com.example.variantes'
+              minSdk 23
+              targetSdk 34
+              versionCode 1
+              versionName '1.0'
+            }
+            buildFeatures { compose true }
+            composeOptions { kotlinCompilerExtensionVersion '1.5.14' }
+            packagingOptions { resources { excludes += ['/META-INF/{AL2.0,LGPL2.1}'] } }
+          }
+
+          dependencies {
+            implementation 'androidx.core:core-ktx:1.13.1'
+            implementation 'androidx.activity:activity-compose:1.9.0'
+            implementation 'androidx.compose.ui:ui:1.6.8'
+            implementation 'androidx.compose.ui:ui-tooling-preview:1.6.8'
+            implementation 'androidx.compose.material3:material3:1.2.1'
+            implementation 'com.google.code.gson:gson:2.10.1'
+            debugImplementation 'androidx.compose.ui:ui-tooling:1.6.8'
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest package="com.example.variantes" xmlns:android="http://schemas.android.com/apk/res/android">
+            <application android:allowBackup="true" android:label="VariantesApp" android:supportsRtl="true">
+              <activity android:name=".MainActivity">
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN"/>
+                  <category android:name="android.intent.category.LAUNCHER"/>
+                </intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/example/variantes/MainActivity.kt <<'EOF'
+          package com.example.variantes
+
+          import android.content.Context
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.activity.enableEdgeToEdge
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.text.input.KeyboardOptions
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.unit.dp
+          import com.google.gson.Gson
+          import com.google.gson.reflect.TypeToken
+
+          data class Variant(
+              var sku: String = "",
+              var nombre: String = "",
+              var precio: Double = 0.0,
+              var stock: Int = 0
+          )
+
+          data class Product(
+              var id: Long = System.currentTimeMillis(),
+              var nombre: String = "",
+              var descripcion: String = "",
+              var variantes: MutableList<Variant> = mutableListOf()
+          )
+
+          private const val PREFS = "inventario_prefs"
+          private const val KEY_DATA = "productos_json"
+
+          class Repo(private val context: Context) {
+              private val gson = Gson()
+              fun cargar(): MutableList<Product> {
+                  val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                  val json = prefs.getString(KEY_DATA, null) ?: return mutableListOf()
+                  val type = object : TypeToken<MutableList<Product>>() {}.type
+                  return gson.fromJson(json, type) ?: mutableListOf()
+              }
+              fun guardar(lista: List<Product>) {
+                  val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                  val json = gson.toJson(lista)
+                  prefs.edit().putString(KEY_DATA, json).apply()
+              }
+          }
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  enableEdgeToEdge()
+                  val repo = Repo(this)
+                  setContent {
+                      MaterialTheme(colorScheme = lightColorScheme()) {
+                          InventarioApp(repo)
+                      }
+                  }
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun InventarioApp(repo: Repo) {
+              var productos by remember { mutableStateOf(repo.cargar()) }
+              var mostrandoEditor by remember { mutableStateOf(false) }
+              var productoEditando by remember { mutableStateOf<Product?>(null) }
+              fun guardarCambios() { repo.guardar(productos) }
+
+              Scaffold(
+                  topBar = { TopAppBar(title = { Text("Inventario con Variantes") }) },
+                  floatingActionButton = {
+                      FloatingActionButton(onClick = {
+                          productoEditando = Product()
+                          mostrandoEditor = true
+                      }) { Text("+") }
+                  }
+              ) { padding ->
+                  Box(Modifier.padding(padding)) {
+                      if (mostrandoEditor) {
+                          EditorProducto(
+                              initial = productoEditando ?: Product(),
+                              onGuardar = { p ->
+                                  val idx = productos.indexOfFirst { it.id == p.id }
+                                  if (idx >= 0) productos[idx] = p else productos.add(0, p)
+                                  guardarCambios(); mostrandoEditor = false
+                              },
+                              onCancelar = { mostrandoEditor = false }
+                          )
+                      } else {
+                          ListaProductos(
+                              productos = productos,
+                              onEditar = { p ->
+                                  productoEditando = p.copy(
+                                      variantes = p.variantes.map { it.copy() }.toMutableList()
+                                  )
+                                  mostrandoEditor = true
+                              },
+                              onEliminar = { p ->
+                                  productos = productos.filter { it.id != p.id }.toMutableList()
+                                  guardarCambios()
+                              }
+                          )
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun ListaProductos(productos: List<Product>, onEditar: (Product)->Unit, onEliminar:(Product)->Unit) {
+              if (productos.isEmpty()) {
+                  Box(Modifier.fillMaxSize().padding(24.dp)) { Text("Aún no hay productos. Toca + para crear uno.") }
+                  return
+              }
+              LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
+                  items(productos, key = { it.id }) { p ->
+                      ElevatedCard(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                          Column(Modifier.padding(12.dp)) {
+                              Text(p.nombre, style = MaterialTheme.typography.titleMedium)
+                              if (p.descripcion.isNotBlank()) Text(p.descripcion)
+                              Spacer(Modifier.height(8.dp))
+                              Text("Variantes: ${p.variantes.size}")
+                              p.variantes.forEach { v ->
+                                  Text("• ${v.nombre} (SKU: ${v.sku}) — Precio: ${v.precio} — Stock: ${v.stock}")
+                              }
+                              Spacer(Modifier.height(12.dp))
+                              Row {
+                                  Button(onClick = { onEditar(p) }) { Text("Editar") }
+                                  Spacer(Modifier.width(8.dp))
+                                  OutlinedButton(onClick = { onEliminar(p) }) { Text("Eliminar") }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun EditorProducto(initial: Product, onGuardar:(Product)->Unit, onCancelar:()->Unit) {
+              var nombre by remember { mutableStateOf(initial.nombre) }
+              var descripcion by remember { mutableStateOf(initial.descripcion) }
+              var variantes by remember { mutableStateOf(initial.variantes) }
+
+              fun agregarVariante() { variantes.add(Variant()) }
+              fun actualizarVariante(i:Int, v:Variant) { variantes[i] = v }
+              fun eliminarVariante(i:Int) { variantes.removeAt(i) }
+
+              Column(Modifier.fillMaxSize().padding(16.dp)) {
+                  OutlinedTextField(nombre, { nombre = it }, label={ Text("Nombre del producto") }, modifier=Modifier.fillMaxWidth())
+                  Spacer(Modifier.height(8.dp))
+                  OutlinedTextField(descripcion, { descripcion = it }, label={ Text("Descripción") }, modifier=Modifier.fillMaxWidth())
+                  Spacer(Modifier.height(12.dp))
+                  Text("Variantes", style = MaterialTheme.typography.titleMedium)
+                  Spacer(Modifier.height(8.dp))
+                  LazyColumn(Modifier.weight(1f)) {
+                      items(variantes.size) { idx ->
+                          VarianteItem(
+                              variante = variantes[idx],
+                              onChange = { actualizarVariante(idx, it) },
+                              onRemove = { eliminarVariante(idx) }
+                          )
+                          Spacer(Modifier.height(8.dp))
+                      }
+                  }
+                  Row {
+                      OutlinedButton(onClick = { agregarVariante() }) { Text("Añadir variante") }
+                      Spacer(Modifier.width(12.dp))
+                      Button(enabled = nombre.isNotBlank(), onClick = {
+                          onGuardar(Product(id = initial.id, nombre = nombre, descripcion = descripcion, variantes = variantes))
+                      }) { Text("Guardar producto") }
+                      Spacer(Modifier.width(12.dp))
+                      TextButton(onClick = onCancelar) { Text("Cancelar") }
+                  }
+              }
+          }
+
+          @Composable
+          fun VarianteItem(variante: Variant, onChange:(Variant)->Unit, onRemove:()->Unit) {
+              ElevatedCard(Modifier.fillMaxWidth()) {
+                  Column(Modifier.padding(12.dp)) {
+                      OutlinedTextField(variante.nombre, { onChange(variante.copy(nombre = it)) }, label={ Text("Nombre de la variante (p.ej. Talla M - Rojo)") }, modifier=Modifier.fillMaxWidth())
+                      Spacer(Modifier.height(6.dp))
+                      OutlinedTextField(variante.sku, { onChange(variante.copy(sku = it)) }, label={ Text("SKU") }, modifier=Modifier.fillMaxWidth())
+                      Spacer(Modifier.height(6.dp))
+                      OutlinedTextField(
+                          if (variante.precio == 0.0) "" else variante.precio.toString(),
+                          { txt -> onChange(variante.copy(precio = txt.toDoubleOrNull() ?: 0.0)) },
+                          label={ Text("Precio") },
+                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                          modifier=Modifier.fillMaxWidth()
+                      )
+                      Spacer(Modifier.height(6.dp))
+                      OutlinedTextField(
+                          if (variante.stock == 0) "" else variante.stock.toString(),
+                          { txt -> onChange(variante.copy(stock = txt.toIntOrNull() ?: 0)) },
+                          label={ Text("Stock") },
+                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                          modifier=Modifier.fillMaxWidth()
+                      )
+                      Spacer(Modifier.height(8.dp))
+                      Row { TextButton(onClick = onRemove) { Text("Eliminar variante") } }
+                  }
+              }
+          }
+          EOF
+
+          echo "Proyecto creado:"
+          find . -maxdepth 4 -type f | sed 's|^\./||'
+      
+      - name: Gradle Build (assembleDebug)
         uses: gradle/gradle-build-action@v3
         with:
           gradle-version: 8.7
