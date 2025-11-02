@@ -1,13 +1,16 @@
-name: Android APK (One-Click, Self-Contained & Wrapper)
+name: Android APK (Self-Contained — one file only)
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
-  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      JAVA_HOME_17_X64: /usr/lib/jvm/temurin-17-jdk-amd64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,15 +21,14 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK components
+      - name: Install Android SDK + tools
         run: |
+          sudo mkdir -p $ANDROID_SDK_ROOT
+          sdkmanager --version || true
           yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Create project files
+      - name: Create Android project files
         shell: bash
         run: |
           set -e
@@ -260,9 +262,9 @@ jobs:
                       Spacer(Modifier.height(6.dp))
                       OutlinedTextField(variante.sku, { onChange(variante.copy(sku = it)) }, label={ Text("SKU") }, modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(6.dp))
-                      OutlinedTextField(if (variante.precio == 0.0) "" else variante.precio.toString(), { txt -> onChange(variante.copy(precio = txt.toDoubleOrNull() ?: 0.0)) }, label={ Text("Precio") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier=Modifier.fillMaxWidth())
+                      OutlinedTextField(if (variante.precio == 0.0) "" else variante.precio.toString(), { t -> onChange(variante.copy(precio = t.toDoubleOrNull() ?: 0.0)) }, label={ Text("Precio") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(6.dp))
-                      OutlinedTextField(if (variante.stock == 0) "" else variante.stock.toString(), { txt -> onChange(variante.copy(stock = txt.toIntOrNull() ?: 0)) }, label={ Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier=Modifier.fillMaxWidth())
+                      OutlinedTextField(if (variante.stock == 0) "" else variante.stock.toString(), { t -> onChange(variante.copy(stock = t.toIntOrNull() ?: 0)) }, label={ Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(8.dp))
                       Row { TextButton(onClick = onRemove) { Text("Eliminar variante") } }
                   }
@@ -271,16 +273,15 @@ jobs:
           EOF
 
       - name: Generate Gradle wrapper
-        uses: gradle/gradle-build-action@v3
-        with:
-          gradle-version: 8.7
-          arguments: wrapper
-
-      - name: Make wrapper executable
-        run: chmod +x ./gradlew
+        run: |
+          gradle --version || true
+          ./gradlew --version || true
+          curl -s https://get.sdkman.io | bash || true
+          ./gradlew wrapper || gradle wrapper || true
+          chmod +x ./gradlew
 
       - name: Build APK (debug)
-        run: ./gradlew :app:assembleDebug
+        run: ./gradlew --no-daemon --stacktrace clean :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
