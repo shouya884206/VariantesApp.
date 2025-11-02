@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,13 +23,16 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install required SDK components
+        run: |
+          sdkmanager --licenses || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
       - name: Create project files (no zip needed)
         shell: bash
         run: |
           set -e
           mkdir -p app/src/main/java/com/example/variantes
-          mkdir -p .github/workflows
-
           cat > settings.gradle <<'EOF'
           pluginManagement {
             repositories { gradlePluginPortal(); google(); mavenCentral() }
@@ -118,19 +123,8 @@ jobs:
           import com.google.gson.Gson
           import com.google.gson.reflect.TypeToken
 
-          data class Variant(
-              var sku: String = "",
-              var nombre: String = "",
-              var precio: Double = 0.0,
-              var stock: Int = 0
-          )
-
-          data class Product(
-              var id: Long = System.currentTimeMillis(),
-              var nombre: String = "",
-              var descripcion: String = "",
-              var variantes: MutableList<Variant> = mutableListOf()
-          )
+          data class Variant(var sku:String=\"\", var nombre:String=\"\", var precio:Double=0.0, var stock:Int=0)
+          data class Product(var id:Long=System.currentTimeMillis(), var nombre:String=\"\", var descripcion:String=\"\", var variantes:MutableList<Variant> = mutableListOf())
 
           private const val PREFS = "inventario_prefs"
           private const val KEY_DATA = "productos_json"
@@ -156,9 +150,7 @@ jobs:
                   enableEdgeToEdge()
                   val repo = Repo(this)
                   setContent {
-                      MaterialTheme(colorScheme = lightColorScheme()) {
-                          InventarioApp(repo)
-                      }
+                      MaterialTheme(colorScheme = lightColorScheme()) { InventarioApp(repo) }
                   }
               }
           }
@@ -174,10 +166,7 @@ jobs:
               Scaffold(
                   topBar = { TopAppBar(title = { Text("Inventario con Variantes") }) },
                   floatingActionButton = {
-                      FloatingActionButton(onClick = {
-                          productoEditando = Product()
-                          mostrandoEditor = true
-                      }) { Text("+") }
+                      FloatingActionButton(onClick = { productoEditando = Product(); mostrandoEditor = true }) { Text("+") }
                   }
               ) { padding ->
                   Box(Modifier.padding(padding)) {
@@ -195,9 +184,7 @@ jobs:
                           ListaProductos(
                               productos = productos,
                               onEditar = { p ->
-                                  productoEditando = p.copy(
-                                      variantes = p.variantes.map { it.copy() }.toMutableList()
-                                  )
+                                  productoEditando = p.copy(variantes = p.variantes.map { it.copy() }.toMutableList())
                                   mostrandoEditor = true
                               },
                               onEliminar = { p ->
@@ -212,10 +199,7 @@ jobs:
 
           @Composable
           fun ListaProductos(productos: List<Product>, onEditar: (Product)->Unit, onEliminar:(Product)->Unit) {
-              if (productos.isEmpty()) {
-                  Box(Modifier.fillMaxSize().padding(24.dp)) { Text("Aún no hay productos. Toca + para crear uno.") }
-                  return
-              }
+              if (productos.isEmpty()) { Box(Modifier.fillMaxSize().padding(24.dp)) { Text("Aún no hay productos. Toca + para crear uno.") }; return }
               LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
                   items(productos, key = { it.id }) { p ->
                       ElevatedCard(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
@@ -224,9 +208,7 @@ jobs:
                               if (p.descripcion.isNotBlank()) Text(p.descripcion)
                               Spacer(Modifier.height(8.dp))
                               Text("Variantes: ${p.variantes.size}")
-                              p.variantes.forEach { v ->
-                                  Text("• ${v.nombre} (SKU: ${v.sku}) — Precio: ${v.precio} — Stock: ${v.stock}")
-                              }
+                              p.variantes.forEach { v -> Text("• ${v.nombre} (SKU: ${v.sku}) — Precio: ${v.precio} — Stock: ${v.stock}") }
                               Spacer(Modifier.height(12.dp))
                               Row {
                                   Button(onClick = { onEditar(p) }) { Text("Editar") }
@@ -244,7 +226,6 @@ jobs:
               var nombre by remember { mutableStateOf(initial.nombre) }
               var descripcion by remember { mutableStateOf(initial.descripcion) }
               var variantes by remember { mutableStateOf(initial.variantes) }
-
               fun agregarVariante() { variantes.add(Variant()) }
               fun actualizarVariante(i:Int, v:Variant) { variantes[i] = v }
               fun eliminarVariante(i:Int) { variantes.removeAt(i) }
@@ -258,11 +239,7 @@ jobs:
                   Spacer(Modifier.height(8.dp))
                   LazyColumn(Modifier.weight(1f)) {
                       items(variantes.size) { idx ->
-                          VarianteItem(
-                              variante = variantes[idx],
-                              onChange = { actualizarVariante(idx, it) },
-                              onRemove = { eliminarVariante(idx) }
-                          )
+                          VarianteItem(variante = variantes[idx], onChange = { actualizarVariante(idx, it) }, onRemove = { eliminarVariante(idx) })
                           Spacer(Modifier.height(8.dp))
                       }
                   }
@@ -286,21 +263,9 @@ jobs:
                       Spacer(Modifier.height(6.dp))
                       OutlinedTextField(variante.sku, { onChange(variante.copy(sku = it)) }, label={ Text("SKU") }, modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(6.dp))
-                      OutlinedTextField(
-                          if (variante.precio == 0.0) "" else variante.precio.toString(),
-                          { txt -> onChange(variante.copy(precio = txt.toDoubleOrNull() ?: 0.0)) },
-                          label={ Text("Precio") },
-                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                          modifier=Modifier.fillMaxWidth()
-                      )
+                      OutlinedTextField(if (variante.precio == 0.0) "" else variante.precio.toString(), { txt -> onChange(variante.copy(precio = txt.toDoubleOrNull() ?: 0.0)) }, label={ Text("Precio") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(6.dp))
-                      OutlinedTextField(
-                          if (variante.stock == 0) "" else variante.stock.toString(),
-                          { txt -> onChange(variante.copy(stock = txt.toIntOrNull() ?: 0)) },
-                          label={ Text("Stock") },
-                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                          modifier=Modifier.fillMaxWidth()
-                      )
+                      OutlinedTextField(if (variante.stock == 0) "" else variante.stock.toString(), { txt -> onChange(variante.copy(stock = txt.toIntOrNull() ?: 0)) }, label={ Text("Stock") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(8.dp))
                       Row { TextButton(onClick = onRemove) { Text("Eliminar variante") } }
                   }
@@ -310,7 +275,7 @@ jobs:
 
           echo "Proyecto creado:"
           find . -maxdepth 4 -type f | sed 's|^\./||'
-      
+
       - name: Gradle Build (assembleDebug)
         uses: gradle/gradle-build-action@v3
         with:
